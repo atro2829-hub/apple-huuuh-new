@@ -209,10 +209,10 @@ jobs:
           </manifest>
           EOF
 
-      - name: 📝 Write Gradle build files
+      - name: 📝 Write Gradle build files (Groovy — simple & reliable)
         run: |
-          # ── settings.gradle.kts ──
-          cat > android-kotlin/settings.gradle.kts << 'EOF'
+          # ── settings.gradle ──
+          cat > android-kotlin/settings.gradle << 'EOF'
           pluginManagement {
               repositories {
                   google()
@@ -220,99 +220,78 @@ jobs:
                   gradlePluginPortal()
               }
           }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+          rootProject.name = "AppleNET"
+          include ':app'
+          EOF
+
+          # ── build.gradle (root) ──
+          cat > android-kotlin/build.gradle << 'EOF'
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.3.2'
+                  classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'
+              }
+          }
+          allprojects {
               repositories {
                   google()
                   mavenCentral()
               }
           }
-          rootProject.name = "AppleNET"
-          include(":app")
           EOF
 
-          # ── build.gradle.kts (root) ──
-          cat > android-kotlin/build.gradle.kts << 'EOF'
-          plugins {
-              alias(libs.plugins.android.application) apply false
-              alias(libs.plugins.kotlin.android) apply false
-          }
-          EOF
-
-          # ── gradle/libs.versions.toml ──
-          mkdir -p android-kotlin/gradle
-          cat > android-kotlin/gradle/libs.versions.toml << 'EOF'
-          [versions]
-          agp = "8.3.2"
-          kotlin = "1.9.24"
-          coreKtx = "1.13.1"
-          appcompat = "1.7.0"
-
-          [libraries]
-          androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
-          androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
-
-          [plugins]
-          android-application = { id = "com.android.application", version.ref = "agp" }
-          kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-          EOF
-
-          # ── app/build.gradle.kts ──
-          cat > android-kotlin/app/build.gradle.kts << 'EOF'
-          plugins {
-              alias(libs.plugins.android.application)
-              alias(libs.plugins.kotlin.android)
-          }
+          # ── app/build.gradle ──
+          cat > android-kotlin/app/build.gradle << 'GRADLEOF'
+          apply plugin: 'com.android.application'
+          apply plugin: 'kotlin-android'
 
           android {
-              namespace = "com.applenet.app"
-              compileSdk = 34
+              namespace 'com.applenet.app'
+              compileSdk 34
 
               defaultConfig {
-                  applicationId = "com.applenet.app"
-                  minSdk = 24
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0.0"
+                  applicationId 'com.applenet.app'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0.0'
               }
 
               signingConfigs {
-                  create("release") {
-                      storeFile = file(System.getenv("KEYSTORE_PATH") ?: "release-key.jks")
-                      storePassword = System.getenv("STORE_PASSWORD") ?: ""
-                      keyAlias = System.getenv("KEY_ALIAS") ?: ""
-                      keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+                  release {
+                      storeFile file(System.getenv('KEYSTORE_PATH') ?: 'release-key.jks')
+                      storePassword System.getenv('STORE_PASSWORD') ?: ''
+                      keyAlias System.getenv('KEY_ALIAS') ?: ''
+                      keyPassword System.getenv('KEY_PASSWORD') ?: ''
                   }
               }
 
               buildTypes {
                   release {
-                      isMinifyEnabled = false
-                      signingConfig = signingConfigs.getByName("release")
+                      minifyEnabled false
+                      signingConfig signingConfigs.release
                   }
               }
 
               compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
               }
 
               kotlinOptions {
-                  jvmTarget = "17"
-              }
-
-              packaging {
-                  resources {
-                      excludes += "/META-INF/{AL2.0,LGPL2.1}"
-                  }
+                  jvmTarget = '17'
               }
           }
 
           dependencies {
-              implementation(libs.androidx.core.ktx)
-              implementation(libs.androidx.appcompat)
+              implementation 'androidx.core:core-ktx:1.13.1'
+              implementation 'androidx.appcompat:appcompat:1.7.0'
           }
-          EOF
+          GRADLEOF
 
           # ── gradle/wrapper/gradle-wrapper.properties ──
           cat > android-kotlin/gradle/wrapper/gradle-wrapper.properties << 'EOF'
@@ -323,7 +302,15 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          echo "✅ All build files written"
+          # ── gradle.properties ──
+          cat > android-kotlin/gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.enableJetifier=true
+          kotlin.code.style=official
+          EOF
+
+          echo "✅ Groovy Gradle files written"
 
       - name: 📥 Download Gradle wrapper
         run: |
@@ -425,38 +412,35 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # Use system gradle if wrapper jar missing
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            sudo apt-get install -y gradle 2>/dev/null || true
-            GRADLE_CMD="gradle"
-          else
-            chmod +x gradlew
-            GRADLE_CMD="./gradlew"
-          fi
-
-          echo "Using: $GRADLE_CMD"
-
-          $GRADLE_CMD assembleRelease bundleRelease \
+          chmod +x gradlew
+          echo "=== Building Release APK & AAB ==="
+          ./gradlew assembleRelease bundleRelease \
             --no-daemon \
-            --stacktrace \
-            -Dorg.gradle.jvmargs="-Xmx3g" 2>&1 | tail -60
+            -Dorg.gradle.jvmargs="-Xmx3g"
 
           echo "=== Build outputs ==="
           find . -name "*.apk" -o -name "*.aab" 2>/dev/null
 
-      - name: 📋 List & collect artifacts
+      - name: 📋 Collect signed artifacts
         run: |
           cd android-kotlin
+
           APK=$(find . -path "*/release/*.apk" 2>/dev/null | head -1)
           AAB=$(find . -path "*/release/*.aab" 2>/dev/null | head -1)
-
           echo "APK: $APK"
           echo "AAB: $AAB"
 
-          [ -n "$APK" ] && cp "$APK" "$GITHUB_WORKSPACE/Apple.NET-release.apk"
-          [ -n "$AAB" ] && cp "$AAB" "$GITHUB_WORKSPACE/Apple.NET-release.aab"
+          if [ -n "$APK" ]; then
+            cp "$APK" "$GITHUB_WORKSPACE/Apple.NET-release.apk"
+            echo "✅ APK: $(du -h $GITHUB_WORKSPACE/Apple.NET-release.apk | cut -f1)"
+          else
+            echo "❌ No APK found"; exit 1
+          fi
 
-          ls -la "$GITHUB_WORKSPACE/Apple.NET-release"* 2>/dev/null
+          if [ -n "$AAB" ]; then
+            cp "$AAB" "$GITHUB_WORKSPACE/Apple.NET-release.aab"
+            echo "✅ AAB: $(du -h $GITHUB_WORKSPACE/Apple.NET-release.aab | cut -f1)"
+          fi
 
       - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
