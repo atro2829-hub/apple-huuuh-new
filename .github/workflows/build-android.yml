@@ -201,12 +201,32 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release-key.jks
           echo "✅ Keystore ready ($(wc -c < release-key.jks) bytes)"
 
-      - name: ✍️ Sign APK
+      - name: ✍️ Sign APK & AAB
         run: |
-          APK=$(find cap-project/android -name "*-unsigned.apk" | head -1)
-          [ -z "$APK" ] && APK=$(find cap-project/android -name "*.apk" | head -1)
-          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -1)
+          echo "=== All APK/AAB files ==="
+          find cap-project/android -name "*.apk" -o -name "*.aab" 2>/dev/null
 
+          # Find unsigned APK (Gradle release output)
+          APK=$(find cap-project/android/app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
+          AAB=$(find cap-project/android/app/build/outputs/bundle/release -name "*.aab" 2>/dev/null | head -1)
+
+          # Fallback search
+          [ -z "$APK" ] && APK=$(find cap-project/android -name "app-release*.apk" 2>/dev/null | head -1)
+          [ -z "$APK" ] && APK=$(find cap-project/android -name "*.apk" 2>/dev/null | head -1)
+          [ -z "$AAB" ] && AAB=$(find cap-project/android -name "*.aab" 2>/dev/null | head -1)
+
+          echo "APK: $APK"
+          echo "AAB: $AAB"
+
+          if [ -z "$APK" ]; then
+            echo "❌ No APK found in build outputs"
+            exit 1
+          fi
+
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner 2>/dev/null | sort -V | tail -1)
+          echo "Using apksigner: $APKSIGNER"
+
+          # Sign APK
           "$APKSIGNER" sign \
             --ks release-key.jks \
             --ks-pass "pass:${{ secrets.STORE_PASSWORD }}" \
@@ -214,24 +234,21 @@ jobs:
             --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
             --out "Apple.NET-release.apk" \
             "$APK"
-
           echo "✅ APK signed: $(du -h Apple.NET-release.apk | cut -f1)"
 
-      - name: ✍️ Sign AAB
-        run: |
-          AAB=$(find cap-project/android -name "*.aab" | head -1)
-          cp "$AAB" "Apple.NET-release.aab"
-
-          jarsigner \
-            -sigalg SHA256withRSA \
-            -digestalg SHA-256 \
-            -keystore release-key.jks \
-            -storepass "${{ secrets.STORE_PASSWORD }}" \
-            -keypass "${{ secrets.KEY_PASSWORD }}" \
-            "Apple.NET-release.aab" \
-            "${{ secrets.KEY_ALIAS }}"
-
-          echo "✅ AAB signed: $(du -h Apple.NET-release.aab | cut -f1)"
+          # Sign AAB
+          if [ -n "$AAB" ]; then
+            cp "$AAB" "Apple.NET-release.aab"
+            jarsigner \
+              -sigalg SHA256withRSA \
+              -digestalg SHA-256 \
+              -keystore release-key.jks \
+              -storepass "${{ secrets.STORE_PASSWORD }}" \
+              -keypass "${{ secrets.KEY_PASSWORD }}" \
+              "Apple.NET-release.aab" \
+              "${{ secrets.KEY_ALIAS }}"
+            echo "✅ AAB signed: $(du -h Apple.NET-release.aab | cut -f1)"
+          fi
 
       - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
