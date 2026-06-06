@@ -3,7 +3,7 @@ import { getAuth } from "firebase/auth";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBAhuybF3tz1oh6j9HtNfhyo52tAX_t-_4",
+  apiKey: "AIzaSyA7O47G7ekKYSdS_uAAnyov7RHK0m68ETY",
   authDomain: "apple-net-df0e7.firebaseapp.com",
   databaseURL: "https://apple-net-df0e7-default-rtdb.firebaseio.com",
   projectId: "apple-net-df0e7",
