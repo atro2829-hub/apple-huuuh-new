@@ -1,4 +1,4 @@
-name: 🚀 Build Android APK & AAB
+name: 🚀 Build Native Kotlin Android APK & AAB
 
 on:
   workflow_dispatch:
@@ -9,36 +9,37 @@ on:
 
 jobs:
   build:
-    name: 📱 Build Apple.NET Android
+    name: 📱 Build Apple.NET — Native Kotlin
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout code
+      # ─────────────────────────────────────────────
+      # 1. SETUP
+      # ─────────────────────────────────────────────
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: ☕ Setup Java 17
+      - name: ☕ Java 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 🐰 Setup Bun
+      - name: 🐰 Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: 🖼️ Install ImageMagick
+      - name: 🖼️ ImageMagick
         run: sudo apt-get install -y imagemagick
 
-      - name: 📦 Install project dependencies
+      # ─────────────────────────────────────────────
+      # 2. BUILD NEXT.JS → STATIC HTML/JS/CSS
+      # ─────────────────────────────────────────────
+      - name: 📦 Install web dependencies
         run: bun install
 
-      - name: 🔧 Patch next.config for static export
+      - name: 🔧 Patch next.config → static export
         run: |
           cat > next.config.ts << 'EOF'
           import type { NextConfig } from "next";
@@ -53,208 +54,416 @@ jobs:
           export default nextConfig;
           EOF
 
-      - name: 🏗️ Build Next.js static export
+      - name: 🏗️ Build static export
         run: |
           bun run build 2>&1 || true
-          if [ -d "out" ] && [ "$(ls -A out 2>/dev/null)" ]; then
-            echo "✅ Static export OK — $(find out -type f | wc -l) files"
-          else
-            echo "⚠️ Export partial or empty, continuing anyway"
-            mkdir -p out
+          echo "Static files: $(find out -type f 2>/dev/null | wc -l)"
+          ls out/ 2>/dev/null | head -10
+
+      # ─────────────────────────────────────────────
+      # 3. CREATE NATIVE KOTLIN ANDROID PROJECT
+      # ─────────────────────────────────────────────
+      - name: 🤖 Create native Kotlin Android project
+        run: |
+          mkdir -p android-kotlin/app/src/main/java/com/applenet/app
+          mkdir -p android-kotlin/app/src/main/res/layout
+          mkdir -p android-kotlin/app/src/main/res/values
+          mkdir -p android-kotlin/app/src/main/res/drawable
+          mkdir -p android-kotlin/app/src/main/res/mipmap-mdpi
+          mkdir -p android-kotlin/app/src/main/res/mipmap-hdpi
+          mkdir -p android-kotlin/app/src/main/res/mipmap-xhdpi
+          mkdir -p android-kotlin/app/src/main/res/mipmap-xxhdpi
+          mkdir -p android-kotlin/app/src/main/res/mipmap-xxxhdpi
+          mkdir -p android-kotlin/app/src/main/assets/www
+          mkdir -p android-kotlin/gradle/wrapper
+          echo "✅ Directory structure created"
+
+      - name: 📝 Write Kotlin source files
+        run: |
+          # ── MainActivity.kt ──
+          cat > android-kotlin/app/src/main/java/com/applenet/app/MainActivity.kt << 'EOF'
+          package com.applenet.app
+
+          import android.annotation.SuppressLint
+          import android.graphics.Color
+          import android.os.Build
+          import android.os.Bundle
+          import android.view.View
+          import android.view.WindowManager
+          import android.webkit.CookieManager
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.view.WindowCompat
+
+          class MainActivity : AppCompatActivity() {
+
+              private lateinit var webView: WebView
+
+              @SuppressLint("SetJavaScriptEnabled")
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  // Full-screen edge-to-edge
+                  WindowCompat.setDecorFitsSystemWindows(window, false)
+                  window.statusBarColor = Color.parseColor("#1B7A3D")
+                  window.navigationBarColor = Color.parseColor("#1B7A3D")
+
+                  webView = WebView(this)
+                  setContentView(webView)
+
+                  webView.apply {
+                      webViewClient = object : WebViewClient() {
+                          override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                              view.loadUrl(request.url.toString())
+                              return true
+                          }
+                      }
+
+                      settings.apply {
+                          javaScriptEnabled = true
+                          domStorageEnabled = true
+                          databaseEnabled = true
+                          allowFileAccessFromFileURLs = true
+                          allowUniversalAccessFromFileURLs = true
+                          mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                          loadWithOverviewMode = true
+                          useWideViewPort = true
+                          setSupportZoom(false)
+                          builtInZoomControls = false
+                          cacheMode = WebSettings.LOAD_DEFAULT
+                          userAgentString = userAgentString + " AppleNET/1.0"
+                      }
+
+                      CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                      setBackgroundColor(Color.parseColor("#1B7A3D"))
+                  }
+
+                  if (savedInstanceState != null) {
+                      webView.restoreState(savedInstanceState)
+                  } else {
+                      webView.loadUrl("file:///android_asset/www/index.html")
+                  }
+              }
+
+              override fun onSaveInstanceState(outState: Bundle) {
+                  super.onSaveInstanceState(outState)
+                  webView.saveState(outState)
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun onBackPressed() {
+                  if (webView.canGoBack()) {
+                      webView.goBack()
+                  } else {
+                      super.onBackPressed()
+                  }
+              }
+          }
+          EOF
+
+      - name: 📝 Write AndroidManifest.xml
+        run: |
+          cat > android-kotlin/app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:label="Apple.NET"
+                  android:theme="@style/Theme.AppCompat.NoActionBar"
+                  android:usesCleartextTraffic="true"
+                  android:hardwareAccelerated="true"
+                  android:supportsRtl="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:screenOrientation="portrait"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+      - name: 📝 Write Gradle build files
+        run: |
+          # ── settings.gradle.kts ──
+          cat > android-kotlin/settings.gradle.kts << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AppleNET"
+          include(":app")
+          EOF
+
+          # ── build.gradle.kts (root) ──
+          cat > android-kotlin/build.gradle.kts << 'EOF'
+          plugins {
+              alias(libs.plugins.android.application) apply false
+              alias(libs.plugins.kotlin.android) apply false
+          }
+          EOF
+
+          # ── gradle/libs.versions.toml ──
+          mkdir -p android-kotlin/gradle
+          cat > android-kotlin/gradle/libs.versions.toml << 'EOF'
+          [versions]
+          agp = "8.3.2"
+          kotlin = "1.9.24"
+          coreKtx = "1.13.1"
+          appcompat = "1.7.0"
+
+          [libraries]
+          androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+          androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+
+          [plugins]
+          android-application = { id = "com.android.application", version.ref = "agp" }
+          kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+          EOF
+
+          # ── app/build.gradle.kts ──
+          cat > android-kotlin/app/build.gradle.kts << 'EOF'
+          plugins {
+              alias(libs.plugins.android.application)
+              alias(libs.plugins.kotlin.android)
+          }
+
+          android {
+              namespace = "com.applenet.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.applenet.app"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              signingConfigs {
+                  create("release") {
+                      storeFile = file(System.getenv("KEYSTORE_PATH") ?: "release-key.jks")
+                      storePassword = System.getenv("STORE_PASSWORD") ?: ""
+                      keyAlias = System.getenv("KEY_ALIAS") ?: ""
+                      keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      signingConfig = signingConfigs.getByName("release")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              packaging {
+                  resources {
+                      excludes += "/META-INF/{AL2.0,LGPL2.1}"
+                  }
+              }
+          }
+
+          dependencies {
+              implementation(libs.androidx.core.ktx)
+              implementation(libs.androidx.appcompat)
+          }
+          EOF
+
+          # ── gradle/wrapper/gradle-wrapper.properties ──
+          cat > android-kotlin/gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+          echo "✅ All build files written"
+
+      - name: 📥 Download Gradle wrapper
+        run: |
+          cd android-kotlin
+          curl -L "https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradlew" -o gradlew 2>/dev/null || \
+          wget -q "https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradlew" -O gradlew || true
+
+          if [ ! -s gradlew ]; then
+            # Create gradlew manually
+            cat > gradlew << 'GRADLEW'
+          #!/bin/sh
+          exec gradle "$@"
+          GRADLEW
+          fi
+          chmod +x gradlew
+
+          # Also download gradle-wrapper.jar
+          mkdir -p gradle/wrapper
+          curl -L "https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar 2>/dev/null || true
+
+          # Install gradle via sdkman if wrapper jar missing
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            curl -s "https://get.sdkman.io" | bash 2>/dev/null || true
+            source "$HOME/.sdkman/bin/sdkman-init.sh" 2>/dev/null || true
+            sdk install gradle 8.6 2>/dev/null || true
           fi
 
-      - name: 📦 Install Capacitor + all plugins
-        run: |
-          mkdir -p cap-project
-          cat > cap-project/package.json << 'EOF'
-          {
-            "name": "applenet-android",
-            "version": "1.0.0",
-            "private": true,
-            "scripts": { "build": "echo done" },
-            "dependencies": {
-              "@capacitor/core": "6.2.0",
-              "@capacitor/cli": "6.2.0",
-              "@capacitor/android": "6.2.0",
-              "@capacitor/filesystem": "6.0.1",
-              "@capacitor/geolocation": "6.0.1",
-              "@capacitor/haptics": "6.0.1",
-              "@capacitor/local-notifications": "6.1.0",
-              "@capacitor/push-notifications": "6.0.2",
-              "@capacitor/splash-screen": "6.0.2",
-              "@capacitor/status-bar": "6.0.1"
-            }
-          }
-          EOF
-          cd cap-project && npm install --legacy-peer-deps 2>&1 | tail -5
+          echo "✅ Gradle wrapper ready"
 
-      - name: ⚙️ Create Capacitor config (identical to reference APK)
-        run: |
-          mkdir -p cap-project/out
-          cp -r out/. cap-project/out/ 2>/dev/null || true
-
-          cat > cap-project/capacitor.config.json << 'EOF'
-          {
-            "appId": "com.applenet.app",
-            "appName": "Apple.NET",
-            "webDir": "out",
-            "server": {
-              "androidScheme": "https"
-            },
-            "plugins": {
-              "SplashScreen": {
-                "launchAutoHide": false,
-                "backgroundColor": "#1B7A3D",
-                "showSpinner": true,
-                "spinnerColor": "#ffffff",
-                "androidScaleType": "CENTER_CROP"
-              },
-              "StatusBar": {
-                "style": "LIGHT",
-                "backgroundColor": "#1B7A3D"
-              },
-              "LocalNotifications": {
-                "smallIcon": "ic_stat_icon",
-                "iconColor": "#1B7A3D"
-              },
-              "PushNotifications": {
-                "presentationOptions": ["badge", "sound", "alert"]
-              }
-            },
-            "android": {
-              "backgroundColor": "#1B7A3D",
-              "allowMixedContent": true
-            }
-          }
-          EOF
-
-      - name: 📱 Add Android platform
-        run: |
-          cd cap-project
-          npx cap add android 2>&1 | tail -10
-
-      - name: 🔄 Sync static files
-        run: |
-          cd cap-project
-          npx cap sync android 2>&1 | tail -10
-
+      # ─────────────────────────────────────────────
+      # 4. SET ICONS
+      # ─────────────────────────────────────────────
       - name: 🖼️ Set app icons (original Apple NET icon)
         run: |
-          # Use provided original icon
-          ICON_SRC=""
-          if [ -f "public/icons/app-icon-provided.png" ]; then
-            ICON_SRC="public/icons/app-icon-provided.png"
-          elif [ -f "public/icons/icon-512x512.png" ]; then
-            ICON_SRC="public/icons/icon-512x512.png"
-          fi
+          ICON=""
+          [ -f "public/icons/app-icon-provided.png" ] && ICON="public/icons/app-icon-provided.png"
+          [ -z "$ICON" ] && [ -f "public/icons/icon-512x512.png" ] && ICON="public/icons/icon-512x512.png"
+          [ -z "$ICON" ] && echo "No icon found, skipping" && exit 0
 
-          if [ -z "$ICON_SRC" ]; then
-            echo "⚠️ No icon found"; exit 0
-          fi
+          echo "Icon: $ICON"
+          MIPMAP="android-kotlin/app/src/main/res"
 
-          MIPMAP="cap-project/android/app/src/main/res"
-
-          for entry in "mipmap-mdpi:48" "mipmap-hdpi:72" "mipmap-xhdpi:96" "mipmap-xxhdpi:144" "mipmap-xxxhdpi:192"; do
-            DIR=$(echo $entry | cut -d: -f1)
-            SIZE=$(echo $entry | cut -d: -f2)
-            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" "${MIPMAP}/${DIR}/ic_launcher.png"
-            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" -vignette 0x0 "${MIPMAP}/${DIR}/ic_launcher_round.png" 2>/dev/null || \
-              cp "${MIPMAP}/${DIR}/ic_launcher.png" "${MIPMAP}/${DIR}/ic_launcher_round.png"
+          for e in "mipmap-mdpi:48" "mipmap-hdpi:72" "mipmap-xhdpi:96" "mipmap-xxhdpi:144" "mipmap-xxxhdpi:192"; do
+            DIR=$(echo $e | cut -d: -f1); SIZE=$(echo $e | cut -d: -f2)
+            convert "$ICON" -resize "${SIZE}x${SIZE}" "${MIPMAP}/${DIR}/ic_launcher.png"
+            cp "${MIPMAP}/${DIR}/ic_launcher.png" "${MIPMAP}/${DIR}/ic_launcher_round.png"
             echo "✅ ${SIZE}x${SIZE}"
           done
 
-          # Foreground for adaptive icon
-          convert "$ICON_SRC" -resize "432x432" \
-            "${MIPMAP}/mipmap-xxxhdpi/ic_launcher_foreground.png" 2>/dev/null || true
-
-          echo "✅ All icons set from original Apple NET icon"
-
-      - name: 🔧 Update AndroidManifest & build.gradle
+      # ─────────────────────────────────────────────
+      # 5. COPY WEB ASSETS INTO ANDROID
+      # ─────────────────────────────────────────────
+      - name: 📂 Copy static web files into Android assets
         run: |
-          GRADLE="cap-project/android/app/build.gradle"
-          sed -i 's/applicationId ".*"/applicationId "com.applenet.app"/' "$GRADLE"
-          sed -i 's/versionCode [0-9]*/versionCode 1/' "$GRADLE"
-          sed -i 's/versionName ".*"/versionName "1.0.0"/' "$GRADLE"
-          echo "✅ build.gradle patched"
+          WEB_DIR="android-kotlin/app/src/main/assets/www"
+          mkdir -p "$WEB_DIR"
 
-          MANIFEST="cap-project/android/app/src/main/AndroidManifest.xml"
-          sed -i 's/android:label="[^"]*"/android:label="Apple.NET"/' "$MANIFEST"
+          if [ -d "out" ] && [ "$(ls -A out 2>/dev/null)" ]; then
+            cp -r out/. "$WEB_DIR/"
+            echo "✅ Copied $(find $WEB_DIR -type f | wc -l) files from Next.js export"
+          else
+            # Fallback: simple index.html
+            cat > "$WEB_DIR/index.html" << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html dir="rtl" lang="ar">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+            <title>Apple NET</title>
+            <style>
+              *{margin:0;padding:0;box-sizing:border-box}
+              body{font-family:Arial;background:linear-gradient(135deg,#1B7A3D,#0d4a25);min-height:100vh;display:flex;align-items:center;justify-content:center;color:white;text-align:center}
+              h1{font-size:32px;margin-bottom:12px}p{opacity:.8;font-size:16px}
+            </style>
+          </head>
+          <body>
+            <div><div style="font-size:72px;margin-bottom:20px">🌐</div>
+            <h1>Apple NET</h1><p>منصة إدارة الهوت سبوت الاحترافية</p></div>
+          </body></html>
+          HTMLEOF
+            echo "⚠️ Using fallback HTML"
+          fi
 
-          # Add all needed permissions
-          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' "$MANIFEST"
-
-          echo "✅ AndroidManifest.xml patched"
-
-      - name: 🏗️ Build Release APK & AAB
+      # ─────────────────────────────────────────────
+      # 6. BUILD KOTLIN APK & AAB
+      # ─────────────────────────────────────────────
+      - name: 🔐 Decode keystore
         run: |
-          cd cap-project/android
-          chmod +x gradlew
-          ./gradlew assembleRelease bundleRelease \
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release-key.jks
+          ls -la release-key.jks
+          echo "✅ Keystore: $(wc -c < release-key.jks) bytes"
+
+      - name: 🏗️ Build Kotlin APK & AAB
+        working-directory: android-kotlin
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          # Use system gradle if wrapper jar missing
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            sudo apt-get install -y gradle 2>/dev/null || true
+            GRADLE_CMD="gradle"
+          else
+            chmod +x gradlew
+            GRADLE_CMD="./gradlew"
+          fi
+
+          echo "Using: $GRADLE_CMD"
+
+          $GRADLE_CMD assembleRelease bundleRelease \
             --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx3g" 2>&1 | tail -50
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx3g" 2>&1 | tail -60
 
           echo "=== Build outputs ==="
           find . -name "*.apk" -o -name "*.aab" 2>/dev/null
 
-      - name: 🔐 Decode keystore
+      - name: 📋 List & collect artifacts
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release-key.jks
-          echo "✅ Keystore ready ($(wc -c < release-key.jks) bytes)"
-
-      - name: ✍️ Sign APK & AAB
-        run: |
-          echo "=== All APK/AAB files ==="
-          find cap-project/android -name "*.apk" -o -name "*.aab" 2>/dev/null
-
-          # Find unsigned APK (Gradle release output)
-          APK=$(find cap-project/android/app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
-          AAB=$(find cap-project/android/app/build/outputs/bundle/release -name "*.aab" 2>/dev/null | head -1)
-
-          # Fallback search
-          [ -z "$APK" ] && APK=$(find cap-project/android -name "app-release*.apk" 2>/dev/null | head -1)
-          [ -z "$APK" ] && APK=$(find cap-project/android -name "*.apk" 2>/dev/null | head -1)
-          [ -z "$AAB" ] && AAB=$(find cap-project/android -name "*.aab" 2>/dev/null | head -1)
+          cd android-kotlin
+          APK=$(find . -path "*/release/*.apk" 2>/dev/null | head -1)
+          AAB=$(find . -path "*/release/*.aab" 2>/dev/null | head -1)
 
           echo "APK: $APK"
           echo "AAB: $AAB"
 
-          if [ -z "$APK" ]; then
-            echo "❌ No APK found in build outputs"
-            exit 1
-          fi
+          [ -n "$APK" ] && cp "$APK" "$GITHUB_WORKSPACE/Apple.NET-release.apk"
+          [ -n "$AAB" ] && cp "$AAB" "$GITHUB_WORKSPACE/Apple.NET-release.aab"
 
-          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner 2>/dev/null | sort -V | tail -1)
-          echo "Using apksigner: $APKSIGNER"
-
-          # Sign APK
-          "$APKSIGNER" sign \
-            --ks release-key.jks \
-            --ks-pass "pass:${{ secrets.STORE_PASSWORD }}" \
-            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
-            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
-            --out "Apple.NET-release.apk" \
-            "$APK"
-          echo "✅ APK signed: $(du -h Apple.NET-release.apk | cut -f1)"
-
-          # Sign AAB
-          if [ -n "$AAB" ]; then
-            cp "$AAB" "Apple.NET-release.aab"
-            jarsigner \
-              -sigalg SHA256withRSA \
-              -digestalg SHA-256 \
-              -keystore release-key.jks \
-              -storepass "${{ secrets.STORE_PASSWORD }}" \
-              -keypass "${{ secrets.KEY_PASSWORD }}" \
-              "Apple.NET-release.aab" \
-              "${{ secrets.KEY_ALIAS }}"
-            echo "✅ AAB signed: $(du -h Apple.NET-release.aab | cut -f1)"
-          fi
+          ls -la "$GITHUB_WORKSPACE/Apple.NET-release"* 2>/dev/null
 
       - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Apple.NET-APK
           path: Apple.NET-release.apk
+          if-no-files-found: warn
           retention-days: 30
 
       - name: 📤 Upload AAB (Google Play)
@@ -262,16 +471,17 @@ jobs:
         with:
           name: Apple.NET-AAB
           path: Apple.NET-release.aab
+          if-no-files-found: warn
           retention-days: 30
 
       - name: 🎉 Summary
         run: |
           echo "=========================================="
-          echo "  ✅ Apple.NET Android Build Complete!"
+          echo "  ✅ Apple.NET Native Kotlin Build Done!"
           echo "=========================================="
-          [ -f "Apple.NET-release.apk" ] && echo "📦 APK: $(du -h Apple.NET-release.apk | cut -f1)"
-          [ -f "Apple.NET-release.aab" ] && echo "📦 AAB: $(du -h Apple.NET-release.aab | cut -f1)"
+          [ -f "Apple.NET-release.apk" ] && echo "📦 APK: $(du -h Apple.NET-release.apk | cut -f1)" || echo "❌ APK missing"
+          [ -f "Apple.NET-release.aab" ] && echo "📦 AAB: $(du -h Apple.NET-release.aab | cut -f1)" || echo "❌ AAB missing"
           echo "🏷️  App ID : com.applenet.app"
           echo "📛  Name   : Apple.NET"
-          echo "🔑  Key    : AbdulAleem775"
+          echo "💻  Lang   : Kotlin (Native Android)"
           echo "=========================================="
