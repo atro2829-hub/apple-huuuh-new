@@ -60,6 +60,7 @@ export function CreditPage({ user, onAuthClick, onNavigate }: CreditPageProps) {
   const [showDistricts, setShowDistricts] = useState(false);
   const [showHistory, setShowHistory] = useState(true);
   const [redeemSuccess, setRedeemSuccess] = useState<{ amount: number; visible: boolean } | null>(null);
+  const [userName, setUserName] = useState<string>("");
   const redeemSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,6 +95,11 @@ export function CreditPage({ user, onAuthClick, onNavigate }: CreditPageProps) {
     unsubs.push(distUnsub);
 
     if (user) {
+      // Load user display name from RTDB
+      const nameUnsub = onValue(ref(db, `users/${user.uid}/displayName`), (snap) => {
+        if (snap.val()) setUserName(snap.val());
+      });
+      unsubs.push(nameUnsub);
       const unsub1 = onValue(ref(db, `credit/${user.uid}/amount`), (snap) => setBalance(snap.val() || 0));
       const unsub2 = onValue(ref(db, `credit/${user.uid}/history`), (snap) => {
         const data = snap.val();
@@ -261,7 +267,7 @@ export function CreditPage({ user, onAuthClick, onNavigate }: CreditPageProps) {
               ...redeemedBy,
               [user.uid]: {
                 uid: user.uid,
-                name: user.displayName || user.email || t("credit.user"),
+                name: userName || user.displayName || user.email || t("credit.user"),
                 redeemedAt: Date.now(),
               },
             },

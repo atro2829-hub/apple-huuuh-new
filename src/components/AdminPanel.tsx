@@ -1078,13 +1078,30 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
       const code = generateCode();
       const codeRef = push(ref(db, "sharedRedeemCodes"));
       await set(codeRef, { code, amount, maxRedemptions: maxUses, currentRedemptions: 0, description: sharedCodeDesc.trim(), isActive: true, createdAt: Date.now(), createdBy: auth.currentUser?.uid || null, redeemedBy: {} });
+      
+      // CRITICAL: Create lookup entry so users can find this code when redeeming
+      await set(ref(db, `sharedRedeemCodeLookup/${code}`), {
+        pushId: codeRef.key,
+        amount,
+        maxRedemptions: maxUses,
+        currentRedemptions: 0,
+        isActive: true,
+      });
+      
       toast.success(`${t("admin2.createdGiftCode")}: ${code}`);
       setSharedCodeAmount(""); setSharedCodeMaxUses(""); setSharedCodeDesc("");
     } catch { toast.error(t("admin2.error")); }
   };
 
-  const toggleSharedCode = async (id: string, isActive: boolean) => {
-    try { await update(ref(db, `sharedRedeemCodes/${id}`), { isActive: !isActive }); toast.success(t("admin2.updated")); }
+  const toggleSharedCode = async (id: string, isActive: boolean, code?: string) => {
+    try {
+      await update(ref(db, `sharedRedeemCodes/${id}`), { isActive: !isActive });
+      // Also update lookup entry
+      if (code) {
+        await update(ref(db, `sharedRedeemCodeLookup/${code}`), { isActive: !isActive });
+      }
+      toast.success(t("admin2.updated"));
+    }
     catch { toast.error(t("admin2.error")); }
   };
 
@@ -2971,7 +2988,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                             <Badge className="text-[8px] bg-gray-100 text-gray-500">{sc.currentRedemptions}/{sc.maxRedemptions}</Badge>
                           </div>
                           <div className="flex items-center gap-1">
-                            <Button size="sm" variant="ghost" onClick={() => toggleSharedCode(sc.id, sc.isActive)} className={`h-6 w-6 p-0 ${sc.isActive ? "text-[#1B7A3D]" : "text-gray-300"}`}>{sc.isActive ? <ToggleRight className="w-3 h-3" /> : <ToggleLeft className="w-3 h-3" />}</Button>
+                            <Button size="sm" variant="ghost" onClick={() => toggleSharedCode(sc.id, sc.isActive, sc.code)} className={`h-6 w-6 p-0 ${sc.isActive ? "text-[#1B7A3D]" : "text-gray-300"}`}>{sc.isActive ? <ToggleRight className="w-3 h-3" /> : <ToggleLeft className="w-3 h-3" />}</Button>
                           </div>
                         </div>
                       </div>
