@@ -12,6 +12,7 @@ import { db } from "@/lib/firebase";
 import { ref, onValue, update, remove } from "firebase/database";
 import type { AppNotification } from "@/lib/types";
 import { iOSSpring, formatDate } from "@/lib/constants";
+import { vibrateDevice, playNotificationSound } from "@/lib/notifications";
 import { useLanguage } from "@/context/LanguageContext";
 
 interface NotificationCenterProps {
@@ -97,6 +98,9 @@ export function NotificationCenter({ uid, isAdmin }: NotificationCenterProps) {
     setMounted(true);
   }, []);
 
+  // Track previous notification count to detect new ones
+  const prevNotifCountRef = React.useRef(0);
+
   useEffect(() => {
     setLoading(true);
     const notifRef = ref(db, notifPath);
@@ -107,8 +111,18 @@ export function NotificationCenter({ uid, isAdmin }: NotificationCenterProps) {
           .map(([id, val]: [string, unknown]) => ({ id, ...(val as Record<string, unknown>) }))
           .sort((a: AppNotification, b: AppNotification) => (b.createdAt || 0) - (a.createdAt || 0)) as AppNotification[];
         setNotifications(list);
+
+        // Detect new notifications (count increased or new unread)
+        const unreadCount = list.filter(n => !n.isRead).length;
+        if (prevNotifCountRef.current > 0 && unreadCount > prevNotifCountRef.current) {
+          // New notification arrived - vibrate and play sound
+          vibrateDevice([100, 50, 100]);
+          try { playNotificationSound(); } catch {}
+        }
+        prevNotifCountRef.current = unreadCount;
       } else {
         setNotifications([]);
+        prevNotifCountRef.current = 0;
       }
       setLoading(false);
     }, (error) => {

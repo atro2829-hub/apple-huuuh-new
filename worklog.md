@@ -1,24 +1,26 @@
-# Worklog
+---
+Task ID: 1
+Agent: Main Agent
+Task: Implement FCM push notifications system for Apple.NET
 
-## 2026-03-04: Task 1 - Deploy Apple.NET Project
+Work Log:
+- Updated src/lib/firebase.ts to add FCM messaging support with lazy initialization
+- Created src/lib/fcm.ts with complete FCM integration (web + Capacitor native)
+- Created src/app/api/send-notification/route.ts for server-side FCM push sending via firebase-admin
+- Updated src/lib/notifications.ts with vibration, sound, and FCM helper functions
+- Created public/firebase-messaging-sw.js for FCM background message handling
+- Updated src/app/page.tsx to register FCM token on login and cleanup on logout
+- Updated src/components/AdminPanel.tsx with enhanced notification tab (target selection, FCM push toggle, VAPID key settings, notification type)
+- Updated src/components/NotificationCenter.tsx with vibration and sound on new notifications
+- Updated Android project: added MyFirebaseMessagingService.java, firebase-messaging dependency, notification channel in AndroidManifest.xml, colors.xml
+- Fixed next.config.ts to remove deprecated eslint option
+- Verified project builds successfully with Next.js 16
 
-### Agent: Main Agent
-### Status: COMPLETED
-
-Deployed the Apple.NET project from the cloned GitHub repo (`/home/z/my-project/Apple-Net-end-end-2/apple-project/`) to the current workspace (`/home/z/my-project/`).
-
-**Steps:**
-1. Copied 27 custom components (not ui/) from Apple.NET to src/components/
-2. Copied 6 lib files (firebase, constants, types, i18n, notifications, cleanup) to src/lib/
-3. Merged Apple.NET's utility functions into src/lib/utils.ts (added sanitizeInput, normalizeCode, compressImageToBase64, isValidAmount, isValidEmail, isValidYemenPhone)
-4. Copied use-mobile.tsx hook
-5. Created src/context/ with LanguageContext.tsx and ThemeProvider.tsx
-6. Created src/app/api/cleanup/route.ts
-7. Copied all public assets (images, icons, splash, uploads, manifest, sw.js, etc.)
-8. Replaced page.tsx, layout.tsx, globals.css with Apple.NET versions
-9. Updated next.config.ts (removed output: "export")
-10. Installed 25+ additional npm dependencies (firebase, framer-motion, sonner, zustand, recharts, etc.)
-
-**Error fixed:** Missing utility exports in utils.ts caused 500 errors. Merged Apple.NET's functions into existing utils.ts.
-
-**Final status:** App running successfully at localhost:3000, returning 200 OK.
+Stage Summary:
+- FCM push notifications system fully implemented for both web (PWA) and Android (Capacitor)
+- Admin panel can send targeted or bulk notifications with optional FCM push
+- FCM tokens stored in Firebase RTDB under fcmTokens/{uid}
+- VAPID key configurable from admin panel settings
+- Notification vibration and sound added for both web and Android
+- Android project ready with FirebaseMessagingService and notification channel
+- Build passes successfully

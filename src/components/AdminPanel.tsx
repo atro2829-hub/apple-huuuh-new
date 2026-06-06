@@ -246,7 +246,12 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   // Notification forms
   const [bulkTitle, setBulkTitle] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkType, setBulkType] = useState<string>("general");
+  const [bulkTarget, setBulkTarget] = useState<"all" | "active" | "specific">("active");
+  const [bulkTargetUid, setBulkTargetUid] = useState("");
   const [isSendingBulk, setIsSendingBulk] = useState(false);
+  const [sendPush, setSendPush] = useState(true);
+  const [fcmVapidKey, setFcmVapidKeyValue] = useState("");
 
   // App content
   const [appContent, setAppContent] = useState<Record<string, string>>({});
@@ -315,6 +320,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
         if (data.appDownloadUrl) setAppDownloadUrl(data.appDownloadUrl);
         if (data.latestAppVersion) setLatestAppVersion(data.latestAppVersion);
         if (data.updateMessage) setUpdateMessage(data.updateMessage);
+        if (data.fcmVapidKey) setFcmVapidKeyValue(data.fcmVapidKey);
       }
     });
     unsubs.push(settingsUnsub);
@@ -1086,24 +1092,111 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
     catch { toast.error(t("admin2.error")); }
   };
 
-  // Bulk notifications
+  // Bulk notifications with FCM push
   const sendBulkNotification = async () => {
     if (!bulkTitle || !bulkMessage) { toast.error(t("admin2.enterTitleMessage")); return; }
+    if (bulkTarget === "specific" && !bulkTargetUid) { toast.error("يرجى اختيار المستخدم"); return; }
     setIsSendingBulk(true);
     try {
-      const targetUsers = usersList.filter(u => u.isActive !== false);
+      let targetUsers = bulkTarget === "all"
+        ? usersList
+        : bulkTarget === "specific"
+          ? usersList.filter(u => u.id === bulkTargetUid)
+          : usersList.filter(u => u.isActive !== false);
+
       let sentCount = 0;
+
+      // 1. Write notification to RTDB for each user (in-app notification)
       for (const u of targetUsers) {
         const notifRef = push(ref(db, `notifications/${u.id}`));
-        await set(notifRef, { type: "general", title: bulkTitle.trim(), message: bulkMessage.trim(), isRead: false, createdAt: Date.now() });
+        await set(notifRef, {
+          type: bulkType || "general",
+          title: bulkTitle.trim(),
+          message: bulkMessage.trim(),
+          isRead: false,
+          createdAt: Date.now(),
+        });
         sentCount++;
       }
+
+      // 2. Send FCM push notification if enabled
+      let pushSentCount = 0;
+      let pushFailCount = 0;
+      if (sendPush) {
+        try {
+          // Collect FCM tokens for target users
+          const tokens: string[] = [];
+          for (const u of targetUsers) {
+            const tokenSnap = await get(ref(db, `fcmTokens/${u.id}/token`));
+            if (tokenSnap.exists() && tokenSnap.val()) {
+              tokens.push(tokenSnap.val());
+            }
+          }
+
+          // Send push in batches of 500 (FCM multicast limit)
+          if (tokens.length > 0) {
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
+              const batch = tokens.slice(i, i + BATCH_SIZE);
+              try {
+                const response = await fetch("/api/send-notification", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    tokens: batch,
+                    title: bulkTitle.trim(),
+                    message: bulkMessage.trim(),
+                    type: bulkType || "general",
+                  }),
+                });
+                const result = await response.json();
+                if (result.success) {
+                  pushSentCount += result.successCount || 0;
+                  pushFailCount += result.failureCount || 0;
+                }
+              } catch (pushError) {
+                console.warn("[Admin] Push notification batch failed:", pushError);
+                pushFailCount += batch.length;
+              }
+            }
+          }
+        } catch (pushError) {
+          console.warn("[Admin] FCM push error:", pushError);
+        }
+      }
+
+      // 3. Save to bulk notification history
       const bulkRef = push(ref(db, "bulkNotifications"));
-      await set(bulkRef, { title: bulkTitle.trim(), message: bulkMessage.trim(), type: "general", targetCount: sentCount, sentAt: Date.now(), sentBy: auth.currentUser?.uid || null });
-      toast.success(`${t("admin2.sentNotificationToUsers")} ${sentCount} ${t("admin2.user2")}`);
-      setBulkTitle(""); setBulkMessage("");
+      await set(bulkRef, {
+        title: bulkTitle.trim(),
+        message: bulkMessage.trim(),
+        type: bulkType || "general",
+        targetCount: sentCount,
+        pushSentCount,
+        pushFailCount,
+        pushEnabled: sendPush,
+        sentAt: Date.now(),
+        sentBy: auth.currentUser?.uid || null,
+      });
+
+      const msg = sendPush
+        ? `${t("admin2.sentNotificationToUsers")} ${sentCount} ${t("admin2.user2")} | Push: ${pushSentCount} نجح, ${pushFailCount} فشل`
+        : `${t("admin2.sentNotificationToUsers")} ${sentCount} ${t("admin2.user2")}`;
+      toast.success(msg);
+      setBulkTitle(""); setBulkMessage(""); setBulkType("general");
     } catch { toast.error(t("admin2.error")); }
     setIsSendingBulk(false);
+  };
+
+  // Save FCM VAPID key from admin settings
+  const saveFCMVapidKey = async (key: string) => {
+    try {
+      await update(ref(db, "settings"), { fcmVapidKey: key });
+      setFcmVapidKeyValue(key);
+      toast.success("تم حفظ مفتاح VAPID بنجاح");
+    } catch {
+      toast.error(t("admin2.error"));
+    }
   };
 
   // Mark commission as paid
@@ -3006,16 +3099,98 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
             {/* ═══ TAB 14: الإشعارات ═══ */}
             {activeTab === "notifications" && (
               <motion.div key="notifications" variants={sectionVariants} initial="initial" animate="animate" exit="exit" transition={iOSSpring.gentle} className="space-y-4">
+                {/* Send Notification */}
                 <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
                   <div className="p-4 border-b border-gray-50">
-                    <h3 className="text-sm font-bold text-[#1B7A3D] flex items-center gap-2"><Send className="w-4 h-4" />إرسال إشعار جماعي</h3>
+                    <h3 className="text-sm font-bold text-[#1B7A3D] flex items-center gap-2"><Send className="w-4 h-4" />إرسال إشعار</h3>
                   </div>
                   <div className="p-4 space-y-3">
+                    {/* Target Selection */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-gray-500">الفئة المستهدفة</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button onClick={() => setBulkTarget("active")} className={`py-2 px-3 rounded-xl text-[10px] font-bold transition-colors ${bulkTarget === "active" ? "bg-[#1B7A3D] text-white" : "bg-gray-50 text-gray-600 border border-gray-200"}`}>المستخدمون النشطون</button>
+                        <button onClick={() => setBulkTarget("all")} className={`py-2 px-3 rounded-xl text-[10px] font-bold transition-colors ${bulkTarget === "all" ? "bg-[#1B7A3D] text-white" : "bg-gray-50 text-gray-600 border border-gray-200"}`}>جميع المستخدمين</button>
+                        <button onClick={() => setBulkTarget("specific")} className={`py-2 px-3 rounded-xl text-[10px] font-bold transition-colors ${bulkTarget === "specific" ? "bg-[#1B7A3D] text-white" : "bg-gray-50 text-gray-600 border border-gray-200"}`}>مستخدم محدد</button>
+                      </div>
+                    </div>
+
+                    {/* Specific user selector */}
+                    {bulkTarget === "specific" && (
+                      <select value={bulkTargetUid} onChange={e => setBulkTargetUid(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold">
+                        <option value="">اختر المستخدم</option>
+                        {usersList.map(u => <option key={u.id} value={u.id}>{u.displayName} ({u.email})</option>)}
+                      </select>
+                    )}
+
+                    {/* Notification Type */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-gray-500">نوع الإشعار</label>
+                      <select value={bulkType} onChange={e => setBulkType(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold">
+                        <option value="general">عام</option>
+                        <option value="deposit_approved">قبول إيداع</option>
+                        <option value="deposit_rejected">رفض إيداع</option>
+                        <option value="card_purchased">شراء كرت</option>
+                        <option value="gift_received">هدية مستلمة</option>
+                        <option value="subscription">اشتراك</option>
+                        <option value="new_deposit_request">طلب إيداع جديد</option>
+                      </select>
+                    </div>
+
                     <Input value={bulkTitle} onChange={e => setBulkTitle(e.target.value)} placeholder="عنوان الإشعار" className="bg-gray-50 border-gray-200 rounded-xl" />
                     <textarea value={bulkMessage} onChange={e => setBulkMessage(e.target.value)} placeholder="نص الإشعار..." className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm min-h-[80px] resize-none" />
+
+                    {/* Push Notification Toggle */}
+                    <div className="flex items-center justify-between bg-gray-50 rounded-xl p-3">
+                      <div className="flex items-center gap-2">
+                        <Bell className="w-4 h-4 text-[#1B7A3D]" />
+                        <div>
+                          <p className="text-xs font-bold text-gray-900">إرسال إشعار فوري (Push)</p>
+                          <p className="text-[9px] text-gray-400">إرسال إشعار حتى عند إغلاق التطبيق</p>
+                        </div>
+                      </div>
+                      <button onClick={() => setSendPush(!sendPush)} className={`w-12 h-7 rounded-full transition-colors ${sendPush ? "bg-[#1B7A3D]" : "bg-gray-200"} relative`}>
+                        <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${sendPush ? "right-1" : "right-6"}`} />
+                      </button>
+                    </div>
+
+                    {/* Target count preview */}
+                    <div className="bg-[#E8F5E9] rounded-xl p-3 flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-[#1B7A3D]">
+                        سيتم الإرسال إلى {bulkTarget === "all" ? usersList.length : bulkTarget === "specific" ? (bulkTargetUid ? 1 : 0) : usersList.filter(u => u.isActive !== false).length} مستخدم
+                      </span>
+                      {sendPush && <Badge className="bg-[#1B7A3D] text-white text-[8px]">+ Push فوري</Badge>}
+                    </div>
+
                     <Button onClick={sendBulkNotification} disabled={isSendingBulk} className="w-full bg-[#1B7A3D] hover:bg-[#165E30] text-white font-bold rounded-xl">
-                      {isSendingBulk ? <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />جاري الإرسال...</span> : <><Send className="w-4 h-4 ml-1" />إرسال للجميع</>}
+                      {isSendingBulk ? <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />جاري الإرسال...</span> : <><Send className="w-4 h-4 ml-1" />إرسال الإشعار</>}
                     </Button>
+                  </div>
+                </div>
+
+                {/* FCM Settings */}
+                <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                  <div className="p-4 border-b border-gray-50">
+                    <h3 className="text-sm font-bold text-orange-600 flex items-center gap-2"><SettingsIcon className="w-4 h-4" />إعدادات الإشعارات الفورية (FCM)</h3>
+                    <p className="text-[9px] text-gray-400 mt-1">مطلوب لعمل الإشعارات الفورية على الويب و PWA</p>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 mb-1 block">مفتاح VAPID</label>
+                      <div className="flex gap-2">
+                        <Input value={fcmVapidKey} onChange={e => setFcmVapidKeyValue(e.target.value)} placeholder="أدخل مفتاح VAPID من Firebase Console" className="bg-gray-50 border-gray-200 rounded-xl text-[11px]" dir="ltr" />
+                        <Button size="sm" onClick={() => saveFCMVapidKey(fcmVapidKey)} className="bg-[#1B7A3D] text-white rounded-xl text-xs shrink-0"><Save className="w-3 h-3" /></Button>
+                      </div>
+                      <p className="text-[8px] text-gray-400 mt-1">Firebase Console ← Project Settings ← Cloud Messaging ← Web Push certificates</p>
+                    </div>
+                    <div className="bg-amber-50 rounded-xl p-3">
+                      <p className="text-[9px] text-amber-700 font-bold leading-relaxed">
+                        لتفعيل الإشعارات الفورية، تحتاج إلى:
+                        <br />1. إضافة مفتاح VAPID أعلاه من Firebase Console
+                        <br />2. إعداد Service Account للخادم (متغير FIREBASE_SERVICE_ACCOUNT)
+                        <br />3. تفعيل Cloud Messaging في مشروع Firebase
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -3029,8 +3204,10 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                       <div key={n.id} className="px-4 py-3 border-b border-gray-50">
                         <p className="text-xs font-bold text-gray-900">{n.title}</p>
                         <p className="text-[9px] text-gray-400 mt-0.5">{n.message}</p>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
                           <Badge className="text-[8px] bg-gray-100 text-gray-500">{n.targetCount} مستلم</Badge>
+                          {n.pushEnabled && <Badge className="text-[8px] bg-blue-50 text-blue-500">Push: {n.pushSentCount || 0} نجح</Badge>}
+                          {n.pushEnabled && (n.pushFailCount || 0) > 0 && <Badge className="text-[8px] bg-red-50 text-red-500">{n.pushFailCount} فشل</Badge>}
                           <span className="text-[8px] text-gray-300">{formatDate(n.sentAt)}</span>
                         </div>
                       </div>

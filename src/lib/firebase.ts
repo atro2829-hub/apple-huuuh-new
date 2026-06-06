@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getDatabase } from "firebase/database";
+import { getMessaging, isSupported } from "firebase/messaging";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDeQMrepTnlldqGycyMzy1qeoaD3g7nxgA",
@@ -15,4 +16,18 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 export const auth = getAuth(app);
 export const db = getDatabase(app);
+
+// FCM Messaging - lazy initialization (only in browser)
+let messagingInstance: ReturnType<typeof getMessaging> | null = null;
+
+export async function getFCMMessaging() {
+  if (typeof window === "undefined") return null;
+  const supported = await isSupported();
+  if (!supported) return null;
+  if (!messagingInstance) {
+    messagingInstance = getMessaging(app);
+  }
+  return messagingInstance;
+}
+
 export default app;

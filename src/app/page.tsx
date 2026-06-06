@@ -64,7 +64,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { PermissionModal } from "@/components/PermissionModal";
 import { iOSSpring } from "@/lib/constants";
-import { initNotifications } from "@/lib/notifications";
+import { initNotifications, vibrateDevice, playNotificationSound } from "@/lib/notifications";
+import { initFCM, unregisterFCMToken } from "@/lib/fcm";
 import { useLanguage } from "@/context/LanguageContext";
 
 const APP_VERSION = "2.1.0";
@@ -101,6 +102,7 @@ export default function AppleNetApp() {
   const [locationModalSaving, setLocationModalSaving] = useState(false);
   const [locationModalDismissed, setLocationModalDismissed] = useState(false);
   const [userPhotoURL, setUserPhotoURL] = useState<string>("");
+  const [fcmCleanup, setFcmCleanup] = useState<(() => void) | null>(null);
 
   // Handle URL params for PWA shortcuts
   useEffect(() => {
@@ -133,6 +135,13 @@ export default function AppleNetApp() {
             const netSnap = await get(ref(db, `users/${u.uid}/managedNetwork`));
             setManagedNetwork(netSnap.val() || "");
           }
+          // Initialize FCM for push notifications
+          try {
+            const cleanup = await initFCM(u.uid);
+            setFcmCleanup(() => cleanup);
+          } catch (fcmError) {
+            console.warn("[App] FCM initialization failed:", fcmError);
+          }
         } catch {
           setIsAdmin(false);
           setUserRole("user");
@@ -142,6 +151,11 @@ export default function AppleNetApp() {
         setUserRole("user");
         setManagedNetwork("");
         setUserName("");
+        // Clean up FCM on logout
+        if (fcmCleanup) {
+          fcmCleanup();
+          setFcmCleanup(null);
+        }
       }
       setLoading(false);
     });
@@ -444,7 +458,15 @@ export default function AppleNetApp() {
             {user ? (
               <motion.button
                 whileTap={{ scale: 0.85 }}
-                onClick={async () => { await signOut(auth); toast.success(t("auth.logout")); }}
+                onClick={async () => {
+                  // Unregister FCM token before signing out
+                  if (user) {
+                    try { await unregisterFCMToken(user.uid); } catch {}
+                  }
+                  if (fcmCleanup) { fcmCleanup(); setFcmCleanup(null); }
+                  await signOut(auth);
+                  toast.success(t("auth.logout"));
+                }}
                 className="w-10 h-10 rounded-2xl bg-red-50 dark:bg-red-900/20 flex items-center justify-center hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors haptic-press"
               >
                 <LogOut className="w-4 h-4 text-red-500" />

@@ -1,4 +1,5 @@
 // Notification System for Apple.NET
+// Complete FCM + local notification integration
 
 const NOTIFICATION_PREF_KEY = "applenet_notifications_enabled";
 const FCM_TOKEN_KEY = "applenet_fcm_token";
@@ -57,7 +58,53 @@ export async function requestNotificationPermission(): Promise<{
 }
 
 /**
+ * Vibrate the device using the Vibration API
+ * Falls back gracefully if not supported
+ */
+export function vibrateDevice(pattern: number | number[] = [100, 50, 100]): void {
+  if (typeof window === "undefined") return;
+  if (navigator.vibrate) {
+    navigator.vibrate(pattern);
+  }
+}
+
+/**
+ * Play notification sound
+ * Uses the Web Audio API to generate a short beep
+ */
+let audioContext: AudioContext | null = null;
+
+export function playNotificationSound(): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    // Pleasant notification sound
+    oscillator.frequency.value = 880; // A5 note
+    oscillator.type = "sine";
+    gainNode.gain.value = 0.3;
+
+    // Start and stop with a short duration
+    oscillator.start(audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+    oscillator.stop(audioContext.currentTime + 0.3);
+  } catch {
+    // Audio playback failed silently
+  }
+}
+
+/**
  * Show a local notification using the Notification API
+ * Includes vibration and sound
  */
 export function showLocalNotification(options: {
   title: string;
@@ -70,6 +117,12 @@ export function showLocalNotification(options: {
   if (!isNotificationSupported() || Notification.permission !== "granted") return;
 
   try {
+    // Vibrate
+    vibrateDevice([100, 50, 100]);
+
+    // Play sound
+    playNotificationSound();
+
     const notification = new Notification(options.title, {
       body: options.body,
       icon: options.icon || "/icons/icon-192x192.png",
@@ -97,7 +150,7 @@ export function showLocalNotification(options: {
 }
 
 /**
- * Save FCM token to localStorage (placeholder for future FCM integration)
+ * Save FCM token to localStorage (backup)
  */
 export function saveFCMToken(token: string): void {
   if (typeof window === "undefined") return;
@@ -105,7 +158,7 @@ export function saveFCMToken(token: string): void {
 }
 
 /**
- * Get saved FCM token
+ * Get saved FCM token from localStorage
  */
 export function getFCMToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -126,7 +179,7 @@ export function removeFCMToken(): void {
  */
 export async function initNotifications(): Promise<void> {
   if (!isNotificationSupported()) return;
-  
+
   // If user previously enabled notifications but permission was revoked,
   // update the preference
   if (isNotificationEnabled() && Notification.permission !== "granted") {
@@ -143,13 +196,11 @@ export async function registerPushSubscription(): Promise<PushSubscription | nul
   try {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
-    
+
     if (subscription) {
       return subscription;
     }
 
-    // For future FCM integration, we would create a subscription here
-    // with a valid VAPID key
     return null;
   } catch {
     return null;
@@ -162,7 +213,7 @@ export async function registerPushSubscription(): Promise<PushSubscription | nul
 export function sendTestNotification(): void {
   showLocalNotification({
     title: "Apple.NET",
-    body: "مرحبًا! الإشعارات تعمل بشكل صحيح ✅",
+    body: "مرحبًا! الإشعارات تعمل بشكل صحيح",
     tag: "test-notification",
   });
 }
