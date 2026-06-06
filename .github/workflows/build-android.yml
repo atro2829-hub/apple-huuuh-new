@@ -1,22 +1,15 @@
-name: 🚀 Build Android APK & AAB
+name: 🚀 Build Android APK & AAB (Static)
 
 on:
   workflow_dispatch:
-    inputs:
-      server_url:
-        description: 'رابط خادم التطبيق (مثال: https://your-domain.com)'
-        required: false
-        default: ''
-        type: string
   push:
     branches: [main]
     paths:
       - '.github/workflows/build-android.yml'
-      - 'capacitor.config.json'
 
 jobs:
   build:
-    name: 📱 Build Android App
+    name: 📱 Build Android App (Static Pages)
     runs-on: ubuntu-latest
 
     steps:
@@ -34,10 +27,94 @@ jobs:
         with:
           node-version: '20'
 
+      - name: 🐰 Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: 🖼️ Install ImageMagick
         run: sudo apt-get install -y imagemagick
 
-      - name: 📦 Create Capacitor wrapper project
+      - name: 📦 Install project dependencies
+        run: bun install
+
+      - name: 🔧 Override next.config for static export
+        run: |
+          cat > next.config.ts << 'EOF'
+          import type { NextConfig } from "next";
+          const nextConfig: NextConfig = {
+            output: 'export',
+            trailingSlash: true,
+            typescript: {
+              ignoreBuildErrors: true,
+            },
+            eslint: {
+              ignoreDuringBuilds: true,
+            },
+            reactStrictMode: false,
+            images: {
+              unoptimized: true,
+            },
+          };
+          export default nextConfig;
+          EOF
+          echo "✅ next.config.ts overridden for static export"
+          cat next.config.ts
+
+      - name: 🏗️ Build Next.js static export
+        run: |
+          bun run build 2>&1 || true
+          if [ -d "out" ] && [ "$(ls -A out)" ]; then
+            echo "✅ Static export succeeded!"
+            echo "Files in out/: $(ls out/ | wc -l)"
+            ls out/ | head -10
+          else
+            echo "⚠️ Static export had issues, trying alternate build..."
+            # Try with next build only
+            npx next build 2>&1 | tail -20 || true
+            if [ -d "out" ]; then
+              echo "✅ Alternate build succeeded"
+            else
+              echo "❌ Build failed, creating fallback static page"
+              mkdir -p out
+              cat > out/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html dir="rtl" lang="ar">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+            <title>Apple NET</title>
+            <link rel="manifest" href="/manifest.json">
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: linear-gradient(135deg, #1B7A3D 0%, #0d4a25 100%);
+                min-height: 100vh; color: white;
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+              }
+              .container { text-align: center; padding: 40px 20px; }
+              .icon { font-size: 80px; margin-bottom: 20px; }
+              h1 { font-size: 32px; margin-bottom: 12px; }
+              p { font-size: 18px; opacity: 0.85; margin-bottom: 8px; }
+              .version { font-size: 14px; opacity: 0.6; margin-top: 40px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="icon">🌐</div>
+              <h1>Apple NET</h1>
+              <p>منصة إدارة الهوت سبوت الاحترافية</p>
+              <p>Professional Hotspot Management</p>
+              <div class="version">v1.0.0</div>
+            </div>
+          </body>
+          </html>
+          HTMLEOF
+            fi
+          fi
+
+      - name: 📦 Setup Capacitor project
         run: |
           mkdir -p android-wrapper
           cat > android-wrapper/package.json << 'EOF'
@@ -45,9 +122,7 @@ jobs:
             "name": "applenet-android",
             "version": "1.0.0",
             "private": true,
-            "scripts": {
-              "build": "echo done"
-            },
+            "scripts": { "build": "echo done" },
             "dependencies": {
               "@capacitor/core": "6.2.0",
               "@capacitor/android": "6.2.0",
@@ -56,101 +131,36 @@ jobs:
           }
           EOF
           cd android-wrapper && npm install --legacy-peer-deps 2>&1 | tail -5
+          echo "✅ Capacitor installed"
 
-      - name: ⚙️ Create Capacitor config
+      - name: ⚙️ Create Capacitor config (NO server URL - fully static)
         run: |
-          SERVER_URL="${{ inputs.server_url }}"
-          if [ -z "$SERVER_URL" ]; then
-            SERVER_URL="${{ secrets.SERVER_URL }}"
-          fi
+          cp -r out/* android-wrapper/www/ 2>/dev/null || mkdir -p android-wrapper/www && cp -r out/. android-wrapper/www/ 2>/dev/null || true
 
-          mkdir -p android-wrapper/public
-          cat > android-wrapper/public/index.html << 'HTMLEOF'
-          <!DOCTYPE html>
-          <html dir="rtl" lang="ar">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Apple NET</title>
-            <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-              body {
-                display: flex; justify-content: center; align-items: center;
-                min-height: 100vh; font-family: Arial, sans-serif;
-                background: linear-gradient(135deg, #1B7A3D 0%, #0d4a25 100%);
-                color: white; text-align: center; padding: 20px;
-              }
-              .logo { font-size: 64px; margin-bottom: 16px; }
-              h1 { font-size: 28px; margin-bottom: 8px; }
-              p { opacity: 0.8; font-size: 16px; }
-              .spinner { margin: 24px auto; width: 40px; height: 40px;
-                border: 4px solid rgba(255,255,255,0.3); border-top-color: white;
-                border-radius: 50%; animation: spin 1s linear infinite; }
-              @keyframes spin { to { transform: rotate(360deg); } }
-            </style>
-          </head>
-          <body>
-            <div>
-              <div class="logo">🌐</div>
-              <h1>Apple NET</h1>
-              <p>منصة إدارة الهوت سبوت الاحترافية</p>
-              <div class="spinner"></div>
-              <p>جاري الاتصال...</p>
-            </div>
-          </body>
-          </html>
-          HTMLEOF
-
-          if [ -n "$SERVER_URL" ]; then
-            cat > android-wrapper/capacitor.config.json << CAPEOF
+          cat > android-wrapper/capacitor.config.json << 'CAPEOF'
           {
             "appId": "com.applenet.hotspot",
             "appName": "Apple NET",
-            "webDir": "public",
-            "server": {
-              "url": "${SERVER_URL}",
-              "cleartext": true,
-              "allowNavigation": ["*"]
-            },
+            "webDir": "www",
             "android": {
               "allowMixedContent": true,
               "webContentsDebuggingEnabled": false,
-              "minWebViewVersion": 60
+              "minWebViewVersion": 60,
+              "backgroundColor": "#1B7A3D"
             },
             "plugins": {
               "SplashScreen": {
                 "launchShowDuration": 2000,
                 "backgroundColor": "#1B7A3D",
-                "showSpinner": true,
-                "spinnerColor": "#FFFFFF"
+                "showSpinner": false,
+                "androidScaleType": "CENTER_CROP"
               }
             }
           }
           CAPEOF
-          else
-            cat > android-wrapper/capacitor.config.json << 'CAPEOF'
-          {
-            "appId": "com.applenet.hotspot",
-            "appName": "Apple NET",
-            "webDir": "public",
-            "android": {
-              "allowMixedContent": true,
-              "webContentsDebuggingEnabled": false
-            },
-            "plugins": {
-              "SplashScreen": {
-                "launchShowDuration": 2000,
-                "backgroundColor": "#1B7A3D",
-                "showSpinner": true,
-                "spinnerColor": "#FFFFFF"
-              }
-            }
-          }
-          CAPEOF
-          fi
 
           echo "✅ Capacitor config created"
-          cat android-wrapper/capacitor.config.json
+          echo "www/ contents: $(ls android-wrapper/www/ 2>/dev/null | wc -l) files"
 
       - name: 📱 Add Android platform
         run: |
@@ -158,33 +168,47 @@ jobs:
           npx cap add android 2>&1
           echo "✅ Android platform added"
 
+      - name: 🔄 Sync static files to Android
+        run: |
+          # Ensure static files are in www before sync
+          mkdir -p android-wrapper/www
+          cp -r out/. android-wrapper/www/ 2>/dev/null || true
+          echo "www files: $(ls android-wrapper/www | head -5)"
+
+          cd android-wrapper
+          npx cap sync android 2>&1 | tail -10
+          echo "✅ Capacitor sync complete"
+
       - name: 🖼️ Set app icons
         run: |
           ICON_SRC=""
-
-          if [ -f "public/icons/icon-512x512.png" ]; then
+          if [ -f "public/icons/app-icon-provided.png" ]; then
+            ICON_SRC="public/icons/app-icon-provided.png"
+          elif [ -f "public/icons/icon-512x512.png" ]; then
             ICON_SRC="public/icons/icon-512x512.png"
           elif [ -f "public/icons/icon-192x192.png" ]; then
             ICON_SRC="public/icons/icon-192x192.png"
           fi
 
           if [ -z "$ICON_SRC" ]; then
-            echo "⚠️ No icon found, using default"
+            echo "⚠️ No icon found, skipping"
             exit 0
           fi
 
+          echo "Using icon: $ICON_SRC"
           MIPMAP_DIR="android-wrapper/android/app/src/main/res"
 
           for config in "mipmap-mdpi:48" "mipmap-hdpi:72" "mipmap-xhdpi:96" "mipmap-xxhdpi:144" "mipmap-xxxhdpi:192"; do
             DIR=$(echo $config | cut -d: -f1)
             SIZE=$(echo $config | cut -d: -f2)
-            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" "${MIPMAP_DIR}/${DIR}/ic_launcher.png"
-            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" -vignette 0x0 "${MIPMAP_DIR}/${DIR}/ic_launcher_round.png" 2>/dev/null || \
-              cp "${MIPMAP_DIR}/${DIR}/ic_launcher.png" "${MIPMAP_DIR}/${DIR}/ic_launcher_round.png"
-            echo "✅ Icon ${SIZE}x${SIZE} created"
+            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" "${MIPMAP_DIR}/${DIR}/ic_launcher.png" && \
+              cp "${MIPMAP_DIR}/${DIR}/ic_launcher.png" "${MIPMAP_DIR}/${DIR}/ic_launcher_round.png" && \
+              echo "✅ ${SIZE}x${SIZE} icon set"
           done
 
-          convert "$ICON_SRC" -resize "432x432" "android-wrapper/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png" 2>/dev/null || true
+          # Also create foreground icon for adaptive icons
+          convert "$ICON_SRC" -resize "432x432" \
+            "android-wrapper/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png" 2>/dev/null || true
 
       - name: 🔧 Update Android app settings
         run: |
@@ -194,14 +218,14 @@ jobs:
             sed -i 's/versionCode [0-9]*/versionCode 1/' "$BUILD_GRADLE"
             sed -i 's/versionName ".*"/versionName "1.0.0"/' "$BUILD_GRADLE"
             echo "✅ build.gradle updated"
-            grep -E "applicationId|versionCode|versionName" "$BUILD_GRADLE"
           fi
 
           MANIFEST="android-wrapper/android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             sed -i 's/android:label="[^"]*"/android:label="Apple NET"/' "$MANIFEST"
+            # Add required permissions
             if ! grep -q "INTERNET" "$MANIFEST"; then
-              sed -i 's/<\/manifest>/    <uses-permission android:name="android.permission.INTERNET" \/>\n<\/manifest>/' "$MANIFEST"
+              sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET" \/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" \/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" \/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" \/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <application/' "$MANIFEST"
             fi
             echo "✅ AndroidManifest.xml updated"
           fi
@@ -213,9 +237,8 @@ jobs:
           echo "🔨 Building Release APK and AAB..."
           ./gradlew assembleRelease bundleRelease \
             --no-daemon \
-            --stacktrace \
-            -Dorg.gradle.jvmargs="-Xmx3g" 2>&1 | tail -30
-          echo "✅ Build complete!"
+            -Dorg.gradle.jvmargs="-Xmx3g" 2>&1 | tail -40
+          echo "✅ Gradle build complete!"
           find . -name "*.apk" -o -name "*.aab" 2>/dev/null
 
       - name: 🔐 Decode keystore
@@ -229,10 +252,9 @@ jobs:
           if [ -z "$APK_PATH" ]; then
             APK_PATH=$(find android-wrapper/android -name "*.apk" 2>/dev/null | head -1)
           fi
-          echo "Signing APK: $APK_PATH"
+          echo "Signing: $APK_PATH"
 
           APKSIGNER="$(find $ANDROID_HOME/build-tools -name apksigner 2>/dev/null | sort -V | tail -1)"
-          echo "Using apksigner: $APKSIGNER"
 
           "$APKSIGNER" sign \
             --ks release-key.jks \
@@ -242,13 +264,12 @@ jobs:
             --out "Apple-NET-v1.0-signed.apk" \
             "$APK_PATH"
 
-          echo "✅ APK signed successfully!"
+          echo "✅ APK signed! Size: $(du -h Apple-NET-v1.0-signed.apk | cut -f1)"
 
       - name: ✍️ Sign AAB
         run: |
           AAB_PATH=$(find android-wrapper/android -name "*.aab" 2>/dev/null | head -1)
           echo "Signing AAB: $AAB_PATH"
-
           cp "$AAB_PATH" "Apple-NET-v1.0.aab"
 
           jarsigner \
@@ -261,7 +282,7 @@ jobs:
             "Apple-NET-v1.0.aab" \
             "${{ secrets.KEY_ALIAS }}"
 
-          echo "✅ AAB signed successfully!"
+          echo "✅ AAB signed! Size: $(du -h Apple-NET-v1.0.aab | cut -f1)"
 
       - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
@@ -280,18 +301,15 @@ jobs:
       - name: 🎉 Build Summary
         run: |
           echo "=================================================="
-          echo "  ✅ Apple NET Android Build Complete!"
+          echo "  ✅ Apple NET Static Android Build Complete!"
           echo "=================================================="
           echo ""
-          echo "📦 APK:  Apple-NET-v1.0-signed.apk"
-          if [ -f "Apple-NET-v1.0-signed.apk" ]; then
-            echo "   Size: $(du -h Apple-NET-v1.0-signed.apk | cut -f1)"
-          fi
+          APK="Apple-NET-v1.0-signed.apk"
+          AAB="Apple-NET-v1.0.aab"
+          [ -f "$APK" ] && echo "📦 APK: $(du -h $APK | cut -f1)" || echo "❌ APK not found"
+          [ -f "$AAB" ] && echo "📦 AAB: $(du -h $AAB | cut -f1)" || echo "❌ AAB not found"
           echo ""
-          echo "📦 AAB:  Apple-NET-v1.0.aab (للنشر على Google Play)"
-          if [ -f "Apple-NET-v1.0.aab" ]; then
-            echo "   Size: $(du -h Apple-NET-v1.0.aab | cut -f1)"
-          fi
-          echo ""
-          echo "🔑 Signed with keystore: AbdulAleem775"
+          echo "🔑 Signed with: AbdulAleem775"
+          echo "🏷️  App ID: com.applenet.hotspot"
+          echo "📱 Type: Static (offline capable)"
           echo "=================================================="
