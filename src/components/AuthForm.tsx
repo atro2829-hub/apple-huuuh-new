@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { auth, db } from "@/lib/firebase";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
-import { ref, set, update } from "firebase/database";
+import { ref, set, update, get, remove, child, push } from "firebase/database";
 import { toast } from "sonner";
 import { AppleNetLogo } from "./AppleNetLogo";
 import { sanitizeInput, isValidEmail, isValidYemenPhone } from "@/lib/utils";
@@ -109,8 +109,128 @@ export function AuthForm({ mode, onSuccess, onSwitchMode, onBack }: AuthFormProp
         });
         toast.success(t("auth2.accountCreated"));
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
-        toast.success(t("auth2.loginSuccess"));
+        try {
+          await signInWithEmailAndPassword(auth, email, password);
+          toast.success(t("auth2.loginSuccess"));
+        } catch (loginErr: unknown) {
+          // Check if it's a "user not found" or "invalid credential" error
+          const errCode = (loginErr as { code?: string })?.code || "";
+          const isUserNotFound =
+            errCode === "auth/user-not-found" ||
+            errCode === "auth/invalid-credential" ||
+            errCode === "auth/wrong-password";
+
+          if (isUserNotFound) {
+            // Try to find the user in the database by email (migration from old Firebase)
+            const usersSnap = await get(ref(db, "users"));
+            if (usersSnap.exists()) {
+              let oldUid: string | null = null;
+              let oldData: Record<string, unknown> | null = null;
+
+              usersSnap.forEach((childSnap) => {
+                const u = childSnap.val();
+                if (u && u.email && u.email.toLowerCase() === email.toLowerCase()) {
+                  oldUid = childSnap.key;
+                  oldData = u;
+                }
+              });
+
+              if (oldUid && oldData) {
+                // Found existing user in DB — create Auth account with the password they entered
+                const newCred = await createUserWithEmailAndPassword(auth, email, password);
+                const newUid = newCred.user.uid;
+
+                // Copy old user data to new UID with migration flag
+                await set(ref(db, `users/${newUid}`), {
+                  ...oldData,
+                  migratedFrom: oldUid,
+                  migratedAt: Date.now(),
+                });
+
+                // Copy credit data if exists
+                const creditSnap = await get(ref(db, `credit/${oldUid}`));
+                if (creditSnap.exists()) {
+                  await set(ref(db, `credit/${newUid}`), creditSnap.val());
+                  await remove(ref(db, `credit/${oldUid}`));
+                }
+
+                // Copy notifications if exists
+                const notifSnap = await get(ref(db, `notifications/${oldUid}`));
+                if (notifSnap.exists()) {
+                  await set(ref(db, `notifications/${newUid}`), notifSnap.val());
+                  await remove(ref(db, `notifications/${oldUid}`));
+                }
+
+                // Copy user settings if exists
+                const settingsSnap = await get(ref(db, `userSettings/${oldUid}`));
+                if (settingsSnap.exists()) {
+                  await set(ref(db, `userSettings/${newUid}`), settingsSnap.val());
+                  await remove(ref(db, `userSettings/${oldUid}`));
+                }
+
+                // Update orders that reference the old UID
+                const ordersSnap = await get(ref(db, "orders"));
+                if (ordersSnap.exists()) {
+                  const updates: Record<string, unknown> = {};
+                  ordersSnap.forEach((orderSnap) => {
+                    const order = orderSnap.val();
+                    if (order && order.userId === oldUid) {
+                      updates[`orders/${orderSnap.key}/userId`] = newUid;
+                    }
+                    if (order && order.usedBy === oldUid) {
+                      updates[`orders/${orderSnap.key}/usedBy`] = newUid;
+                    }
+                  });
+                  if (Object.keys(updates).length > 0) {
+                    await update(ref(db), updates);
+                  }
+                }
+
+                // Update cards that reference the old UID
+                const cardsSnap = await get(ref(db, "cards"));
+                if (cardsSnap.exists()) {
+                  const cardUpdates: Record<string, unknown> = {};
+                  cardsSnap.forEach((cardSnap) => {
+                    const card = cardSnap.val();
+                    if (card && card.usedBy === oldUid) {
+                      cardUpdates[`cards/${cardSnap.key}/usedBy`] = newUid;
+                    }
+                  });
+                  if (Object.keys(cardUpdates).length > 0) {
+                    await update(ref(db), cardUpdates);
+                  }
+                }
+
+                // Update deposit requests that reference the old UID
+                const depositSnap = await get(ref(db, "depositRequests"));
+                if (depositSnap.exists()) {
+                  const depositUpdates: Record<string, unknown> = {};
+                  depositSnap.forEach((depSnap) => {
+                    const dep = depSnap.val();
+                    if (dep && dep.userId === oldUid) {
+                      depositUpdates[`depositRequests/${depSnap.key}/userId`] = newUid;
+                    }
+                  });
+                  if (Object.keys(depositUpdates).length > 0) {
+                    await update(ref(db), depositUpdates);
+                  }
+                }
+
+                // Remove old UID from users
+                await remove(ref(db, `users/${oldUid}`));
+
+                toast.success(t("auth2.loginSuccess"));
+              } else {
+                // User not found in DB either — show original error
+                throw loginErr;
+              }
+            } else {
+              throw loginErr;
+            }
+          } else {
+            throw loginErr;
+          }
+        }
       }
       onSuccess();
     } catch (err: unknown) {
