@@ -9,7 +9,8 @@ const firebaseConfig = {
   projectId: "apple-net-df0e7",
   storageBucket: "apple-net-df0e7.firebasestorage.app",
   messagingSenderId: "910060697351",
-  appId: "1:910060697351:android:177b0075a87ca0cb5ab7a2",
+  appId: "1:910060697351:web:4k86gfb72msn1u5u",
+  measurementId: "G-XXXXXXXXXX",
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
