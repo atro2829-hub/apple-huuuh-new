@@ -1,0 +1,297 @@
+name: 🚀 Build Android APK & AAB
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'رابط خادم التطبيق (مثال: https://your-domain.com)'
+        required: false
+        default: ''
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-android.yml'
+      - 'capacitor.config.json'
+
+jobs:
+  build:
+    name: 📱 Build Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🖼️ Install ImageMagick
+        run: sudo apt-get install -y imagemagick
+
+      - name: 📦 Create Capacitor wrapper project
+        run: |
+          mkdir -p android-wrapper
+          cat > android-wrapper/package.json << 'EOF'
+          {
+            "name": "applenet-android",
+            "version": "1.0.0",
+            "private": true,
+            "scripts": {
+              "build": "echo done"
+            },
+            "dependencies": {
+              "@capacitor/core": "6.2.0",
+              "@capacitor/android": "6.2.0",
+              "@capacitor/cli": "6.2.0"
+            }
+          }
+          EOF
+          cd android-wrapper && npm install --legacy-peer-deps 2>&1 | tail -5
+
+      - name: ⚙️ Create Capacitor config
+        run: |
+          SERVER_URL="${{ inputs.server_url }}"
+          if [ -z "$SERVER_URL" ]; then
+            SERVER_URL="${{ secrets.SERVER_URL }}"
+          fi
+
+          mkdir -p android-wrapper/public
+          cat > android-wrapper/public/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html dir="rtl" lang="ar">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Apple NET</title>
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body {
+                display: flex; justify-content: center; align-items: center;
+                min-height: 100vh; font-family: Arial, sans-serif;
+                background: linear-gradient(135deg, #1B7A3D 0%, #0d4a25 100%);
+                color: white; text-align: center; padding: 20px;
+              }
+              .logo { font-size: 64px; margin-bottom: 16px; }
+              h1 { font-size: 28px; margin-bottom: 8px; }
+              p { opacity: 0.8; font-size: 16px; }
+              .spinner { margin: 24px auto; width: 40px; height: 40px;
+                border: 4px solid rgba(255,255,255,0.3); border-top-color: white;
+                border-radius: 50%; animation: spin 1s linear infinite; }
+              @keyframes spin { to { transform: rotate(360deg); } }
+            </style>
+          </head>
+          <body>
+            <div>
+              <div class="logo">🌐</div>
+              <h1>Apple NET</h1>
+              <p>منصة إدارة الهوت سبوت الاحترافية</p>
+              <div class="spinner"></div>
+              <p>جاري الاتصال...</p>
+            </div>
+          </body>
+          </html>
+          HTMLEOF
+
+          if [ -n "$SERVER_URL" ]; then
+            cat > android-wrapper/capacitor.config.json << CAPEOF
+          {
+            "appId": "com.applenet.hotspot",
+            "appName": "Apple NET",
+            "webDir": "public",
+            "server": {
+              "url": "${SERVER_URL}",
+              "cleartext": true,
+              "allowNavigation": ["*"]
+            },
+            "android": {
+              "allowMixedContent": true,
+              "webContentsDebuggingEnabled": false,
+              "minWebViewVersion": 60
+            },
+            "plugins": {
+              "SplashScreen": {
+                "launchShowDuration": 2000,
+                "backgroundColor": "#1B7A3D",
+                "showSpinner": true,
+                "spinnerColor": "#FFFFFF"
+              }
+            }
+          }
+          CAPEOF
+          else
+            cat > android-wrapper/capacitor.config.json << 'CAPEOF'
+          {
+            "appId": "com.applenet.hotspot",
+            "appName": "Apple NET",
+            "webDir": "public",
+            "android": {
+              "allowMixedContent": true,
+              "webContentsDebuggingEnabled": false
+            },
+            "plugins": {
+              "SplashScreen": {
+                "launchShowDuration": 2000,
+                "backgroundColor": "#1B7A3D",
+                "showSpinner": true,
+                "spinnerColor": "#FFFFFF"
+              }
+            }
+          }
+          CAPEOF
+          fi
+
+          echo "✅ Capacitor config created"
+          cat android-wrapper/capacitor.config.json
+
+      - name: 📱 Add Android platform
+        run: |
+          cd android-wrapper
+          npx cap add android 2>&1
+          echo "✅ Android platform added"
+
+      - name: 🖼️ Set app icons
+        run: |
+          ICON_SRC=""
+
+          if [ -f "public/icons/icon-512x512.png" ]; then
+            ICON_SRC="public/icons/icon-512x512.png"
+          elif [ -f "public/icons/icon-192x192.png" ]; then
+            ICON_SRC="public/icons/icon-192x192.png"
+          fi
+
+          if [ -z "$ICON_SRC" ]; then
+            echo "⚠️ No icon found, using default"
+            exit 0
+          fi
+
+          MIPMAP_DIR="android-wrapper/android/app/src/main/res"
+
+          for config in "mipmap-mdpi:48" "mipmap-hdpi:72" "mipmap-xhdpi:96" "mipmap-xxhdpi:144" "mipmap-xxxhdpi:192"; do
+            DIR=$(echo $config | cut -d: -f1)
+            SIZE=$(echo $config | cut -d: -f2)
+            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" "${MIPMAP_DIR}/${DIR}/ic_launcher.png"
+            convert "$ICON_SRC" -resize "${SIZE}x${SIZE}" -vignette 0x0 "${MIPMAP_DIR}/${DIR}/ic_launcher_round.png" 2>/dev/null || \
+              cp "${MIPMAP_DIR}/${DIR}/ic_launcher.png" "${MIPMAP_DIR}/${DIR}/ic_launcher_round.png"
+            echo "✅ Icon ${SIZE}x${SIZE} created"
+          done
+
+          convert "$ICON_SRC" -resize "432x432" "android-wrapper/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png" 2>/dev/null || true
+
+      - name: 🔧 Update Android app settings
+        run: |
+          BUILD_GRADLE="android-wrapper/android/app/build.gradle"
+          if [ -f "$BUILD_GRADLE" ]; then
+            sed -i 's/applicationId ".*"/applicationId "com.applenet.hotspot"/' "$BUILD_GRADLE"
+            sed -i 's/versionCode [0-9]*/versionCode 1/' "$BUILD_GRADLE"
+            sed -i 's/versionName ".*"/versionName "1.0.0"/' "$BUILD_GRADLE"
+            echo "✅ build.gradle updated"
+            grep -E "applicationId|versionCode|versionName" "$BUILD_GRADLE"
+          fi
+
+          MANIFEST="android-wrapper/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/android:label="[^"]*"/android:label="Apple NET"/' "$MANIFEST"
+            if ! grep -q "INTERNET" "$MANIFEST"; then
+              sed -i 's/<\/manifest>/    <uses-permission android:name="android.permission.INTERNET" \/>\n<\/manifest>/' "$MANIFEST"
+            fi
+            echo "✅ AndroidManifest.xml updated"
+          fi
+
+      - name: 🏗️ Build APK & AAB (Release)
+        run: |
+          cd android-wrapper/android
+          chmod +x gradlew
+          echo "🔨 Building Release APK and AAB..."
+          ./gradlew assembleRelease bundleRelease \
+            --no-daemon \
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx3g" 2>&1 | tail -30
+          echo "✅ Build complete!"
+          find . -name "*.apk" -o -name "*.aab" 2>/dev/null
+
+      - name: 🔐 Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release-key.jks
+          echo "✅ Keystore decoded ($(wc -c < release-key.jks) bytes)"
+
+      - name: ✍️ Sign APK
+        run: |
+          APK_PATH=$(find android-wrapper/android -name "*-unsigned.apk" 2>/dev/null | head -1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find android-wrapper/android -name "*.apk" 2>/dev/null | head -1)
+          fi
+          echo "Signing APK: $APK_PATH"
+
+          APKSIGNER="$(find $ANDROID_HOME/build-tools -name apksigner 2>/dev/null | sort -V | tail -1)"
+          echo "Using apksigner: $APKSIGNER"
+
+          "$APKSIGNER" sign \
+            --ks release-key.jks \
+            --ks-pass "pass:${{ secrets.STORE_PASSWORD }}" \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+            --out "Apple-NET-v1.0-signed.apk" \
+            "$APK_PATH"
+
+          echo "✅ APK signed successfully!"
+
+      - name: ✍️ Sign AAB
+        run: |
+          AAB_PATH=$(find android-wrapper/android -name "*.aab" 2>/dev/null | head -1)
+          echo "Signing AAB: $AAB_PATH"
+
+          cp "$AAB_PATH" "Apple-NET-v1.0.aab"
+
+          jarsigner \
+            -verbose \
+            -sigalg SHA256withRSA \
+            -digestalg SHA-256 \
+            -keystore release-key.jks \
+            -storepass "${{ secrets.STORE_PASSWORD }}" \
+            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            "Apple-NET-v1.0.aab" \
+            "${{ secrets.KEY_ALIAS }}"
+
+          echo "✅ AAB signed successfully!"
+
+      - name: 📤 Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apple-NET-APK-v1.0
+          path: Apple-NET-v1.0-signed.apk
+          retention-days: 30
+
+      - name: 📤 Upload AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apple-NET-AAB-v1.0
+          path: Apple-NET-v1.0.aab
+          retention-days: 30
+
+      - name: 🎉 Build Summary
+        run: |
+          echo "=================================================="
+          echo "  ✅ Apple NET Android Build Complete!"
+          echo "=================================================="
+          echo ""
+          echo "📦 APK:  Apple-NET-v1.0-signed.apk"
+          if [ -f "Apple-NET-v1.0-signed.apk" ]; then
+            echo "   Size: $(du -h Apple-NET-v1.0-signed.apk | cut -f1)"
+          fi
+          echo ""
+          echo "📦 AAB:  Apple-NET-v1.0.aab (للنشر على Google Play)"
+          if [ -f "Apple-NET-v1.0.aab" ]; then
+            echo "   Size: $(du -h Apple-NET-v1.0.aab | cut -f1)"
+          fi
+          echo ""
+          echo "🔑 Signed with keystore: AbdulAleem775"
+          echo "=================================================="
