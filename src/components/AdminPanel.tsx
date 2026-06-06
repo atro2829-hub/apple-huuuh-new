@@ -23,6 +23,7 @@ import {
   PROVINCES, getDistricts, formatDate, iOSSpring, ADMIN_WHATSAPP
 } from "@/lib/constants";
 import { compressImageToBase64 } from "@/lib/utils";
+import { savePDFDocToDevice } from "@/lib/fileSave";
 import {
   AppUser, CardItem, BankDetail, Advertisement, SimCard, DepositRequest,
   NetworkItem, TierItem, RedeemCode, SubscriptionPlan, UserSubscription,
@@ -1042,8 +1043,19 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
       cardIndex++;
     }
 
-    doc.save(`AppleNet-Gift-Cards-${Date.now()}.pdf`);
-    toast.success(t("admin2.pdfGenerated"));
+    const pdfFileName = `AppleNet-Gift-Cards-${Date.now()}.pdf`;
+    const result = await savePDFDocToDevice(doc, pdfFileName);
+    if (result.success) {
+      toast.success(isCapacitorDevice() ? "تم حفظ بطاقات الهدايا في مجلد التنزيلات" : t("admin2.pdfGenerated"));
+    } else {
+      toast.error("فشل حفظ الملف: " + (result.error || ""));
+    }
+  };
+
+  // Check if running in Capacitor native
+  const isCapacitorDevice = () => {
+    if (typeof window === "undefined") return false;
+    return !!(window as any).Capacitor?.isNativePlatform?.();
   };
 
   const deleteRedeemCode = async (id: string, code?: string) => {
